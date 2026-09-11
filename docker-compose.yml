@@ -1,0 +1,20 @@
+
+
+services:
+  backend:
+    build: ./backend
+    container_name: customer-sync-backend
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend/database.sqlite:/app/database.sqlite
+
+  frontend:
+    build: ./frontend
+    container_name: customer-sync-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
