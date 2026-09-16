@@ -61,24 +61,33 @@ function mapUser(rawUser, customerId) {
     status: rawUser.status || null,
 
     companyName: rawUser.company?.name || null,
+
     companyIndustry: rawUser.company?.industry || null,
+
     companyRole: rawUser.company?.role || null,
+
     companyWebsite: rawUser.company?.website || null,
+
     companyEmployees: rawUser.company?.employees || null,
 
     deleted: false,
 
     sourceCreatedAt: rawUser.createdAt || null,
+
     sourceUpdatedAt: rawUser.updatedAt || null,
   };
 }
 
-async function fetchUsers(customer) {
+async function fetchUsers(customer, page = 1) {
   const response = await requestWithRetry(() =>
     axios.get(customer.apiUrl, {
       headers: {
         Authorization: `Bearer ${process.env.CUSTOMER_API_TOKEN}`,
         Accept: "application/json",
+      },
+
+      params: {
+        page,
       },
 
       timeout: REQUEST_TIMEOUT,
@@ -89,7 +98,34 @@ async function fetchUsers(customer) {
     throw new Error("Invalid customer API response");
   }
 
-  return response.data.data;
+  return response.data;
+}
+
+async function fetchAllUsers(customer) {
+  const allUsers = [];
+
+  let page = 1;
+  let hasNextPage = true;
+
+  while (hasNextPage) {
+    const response = await fetchUsers(customer, page);
+
+    allUsers.push(...response.data);
+
+    hasNextPage = response.pagination?.hasNextPage === true;
+
+    if (hasNextPage) {
+      page += 1;
+    }
+  }
+
+  logger.info("customer_api_fetch_completed", {
+    customerId: customer.id,
+    pagesFetched: page,
+    usersFetched: allUsers.length,
+  });
+
+  return allUsers;
 }
 
 async function syncCustomerUsers(customerId) {
@@ -97,6 +133,7 @@ async function syncCustomerUsers(customerId) {
 
   if (!customer) {
     const error = new Error("Customer not found");
+
     error.statusCode = 404;
 
     throw error;
@@ -106,7 +143,7 @@ async function syncCustomerUsers(customerId) {
     customerId: customer.id,
   });
 
-  const remoteUsers = await fetchUsers(customer);
+  const remoteUsers = await fetchAllUsers(customer);
 
   const transformedUsers = remoteUsers.map((user) =>
     mapUser(user, customer.id),
@@ -189,5 +226,6 @@ module.exports = {
   syncCustomerUsers,
   mapUser,
   fetchUsers,
+  fetchAllUsers,
   requestWithRetry,
 };
