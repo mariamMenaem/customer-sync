@@ -8,6 +8,7 @@ const logger = require("../utils/logger");
 const MAX_RETRY_ATTEMPTS = 3;
 const RETRY_BASE_DELAY = 500;
 const REQUEST_TIMEOUT = 10000;
+const MAX_PAGES = 1000;
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -68,7 +69,7 @@ function mapUser(rawUser, customerId) {
 
     companyWebsite: rawUser.company?.website || null,
 
-    companyEmployees: rawUser.company?.employees || null,
+    companyEmployees: rawUser.company?.employees ?? null,
 
     deleted: false,
 
@@ -107,16 +108,33 @@ async function fetchAllUsers(customer) {
   let page = 1;
   let hasNextPage = true;
 
-  while (hasNextPage) {
+  while (hasNextPage && page <= MAX_PAGES) {
+    // FIX: cap pages to prevent infinite loop
     const response = await fetchUsers(customer, page);
 
     allUsers.push(...response.data);
 
     hasNextPage = response.pagination?.hasNextPage === true;
 
+    if (!response.pagination) {
+      // FIX: warn when pagination metadata is missing
+      logger.warn("customer_api_missing_pagination", {
+        customerId: customer.id,
+        page,
+      });
+    }
+
     if (hasNextPage) {
       page += 1;
     }
+  }
+
+  if (page > MAX_PAGES) {
+    logger.warn("customer_api_page_limit_reached", {
+      customerId: customer.id,
+      maxPages: MAX_PAGES,
+      usersFetched: allUsers.length,
+    });
   }
 
   logger.info("customer_api_fetch_completed", {
@@ -178,26 +196,25 @@ async function syncCustomerUsers(customerId) {
       transaction,
     });
 
-    await User.update(
-      {
-        deleted: true,
-      },
-      {
-        where: {
-          customerId: customer.id,
-
-          ...(externalIds.length > 0
-            ? {
-                externalId: {
-                  [Op.notIn]: externalIds,
-                },
-              }
-            : {}),
+    // FIX: only soft-delete when externalIds is non-empty; an empty array means
+    // the remote returned no users — skipping prevents wiping all users by mistake.
+    if (externalIds.length > 0) {
+      await User.update(
+        {
+          deleted: true,
         },
+        {
+          where: {
+            customerId: customer.id,
+            externalId: {
+              [Op.notIn]: externalIds,
+            },
+          },
 
-        transaction,
-      },
-    );
+          transaction,
+        },
+      );
+    }
 
     await transaction.commit();
 
